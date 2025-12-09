@@ -12,7 +12,6 @@ WINDOWS_OUTPUT := $(BUILD_DIR)/$(APP_NAME).exe
 LINUX_OUTPUT := $(BUILD_DIR)/$(APP_NAME)-linux
 MACOS_AMD64_OUTPUT := $(BUILD_DIR)/$(APP_NAME)-darwin-amd64
 MACOS_ARM64_OUTPUT := $(BUILD_DIR)/$(APP_NAME)-darwin-arm64
-DOCKER_OUTPUT := $(BUILD_DIR)/$(APP_NAME).docker
 
 # 默认目标
 .PHONY: all
@@ -52,12 +51,6 @@ darwin-amd64: $(BUILD_DIR)
 .PHONY: darwin-arm64
 darwin-arm64: $(BUILD_DIR)
 	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -a -ldflags '-extldflags "-static" -s -w' -o $(MACOS_ARM64_OUTPUT)
-
-# docker image
-.PHONY: docker
-docker: $(BUILD_DIR)
-	docker build -t $(APP_NAME) .
-	docker save $(APP_NAME) -o $(DOCKER_OUTPUT)
 
 # 清理构建文件
 .PHONY: clean
