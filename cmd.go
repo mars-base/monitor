@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"monitor/utils"
 	"os"
+	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -22,22 +23,23 @@ var (
 	enableNet bool
 	interval  int
 
-	gCpuPercent float64
-	gMemTotal   uint64
-	gMemUsed    uint64
-	gMemFree    uint64
-	gMemPercent float64
+	gCpuPercent     float64
+	gCpuLogicNum    int
+	gCpuPhysicalNum int
+	gMemTotal       uint64
+	gMemUsed        uint64
+	gMemFree        uint64
+	gMemPercent     float64
 )
 
-type NetStat struct {
-	Sent        float64 // 发送速率（b/s）
-	Recv        float64 // 接收速率（b/s）
-	PacketsSent float64 // 发送包速率（pps）
-	PacketsRecv float64 // 接收包速率（pps）
-}
-
 var (
-	gNetInfo  = make(map[string]*NetStat)
+	netMu    sync.RWMutex
+	gNetInfo = make(map[string]struct {
+		Sent        float64 // 发送速率（b/s）
+		Recv        float64 // 接收速率（b/s）
+		PacketsSent float64 // 发送包速率（pps）
+		PacketsRecv float64 // 接收包速率（pps）
+	})
 	gNetNames = []string{}
 )
 
@@ -79,7 +81,7 @@ func CmdEntryPoint() {
 	rootCmd.PersistentFlags().BoolVarP(&enableCpu, "cpu", "c", false, "enable cpu monitor")
 	rootCmd.PersistentFlags().BoolVarP(&enableMem, "mem", "m", false, "enable mem monitor")
 	rootCmd.PersistentFlags().BoolVarP(&enableNet, "net", "n", false, "enable net monitor")
-	rootCmd.PersistentFlags().IntVarP(&interval, "interval", "i", 5, "monitor interval in seconds")
+	rootCmd.PersistentFlags().IntVarP(&interval, "interval", "i", 2, "monitor interval in seconds")
 
 	// add command
 	rootCmd.AddCommand(versionCmd)
@@ -141,6 +143,20 @@ var runCmd = &cobra.Command{
 func cpuMetric() {
 	go func() {
 		utils.Log().Debug("cpu metric started")
+
+		// get cpu number
+		var err error
+		gCpuPhysicalNum, err = cpu.Counts(false)
+		if err != nil {
+			utils.Log().Debug("get cpu physical number failed:", err)
+			return
+		}
+		gCpuLogicNum, err = cpu.Counts(true)
+		if err != nil {
+			utils.Log().Debug("get cpu logic number failed:", err)
+			return
+		}
+
 		for {
 			if stop {
 				utils.Log().Debug("cpu metric stopped")
@@ -205,7 +221,12 @@ func netMetric() {
 		for _, netIf := range netIfs {
 			utils.Log().Debugf("net interface: %s", netIf.Name)
 			// 初始化网络接口信息
-			gNetInfo[netIf.Name] = &NetStat{
+			gNetInfo[netIf.Name] = struct {
+				Sent        float64
+				Recv        float64
+				PacketsSent float64
+				PacketsRecv float64
+			}{
 				Sent:        0,
 				Recv:        0,
 				PacketsSent: 0,
@@ -257,11 +278,8 @@ func netMetric() {
 					speedPacketsSent := float64(counter.PacketsSent - netHistory[counter.Name].prevPacketsSent)
 					speedPacketsRecv := float64(counter.PacketsRecv - netHistory[counter.Name].prevPacketsRecv)
 
-					// record to global variable
-					gNetInfo[counter.Name].Sent = speedSent
-					gNetInfo[counter.Name].Recv = speedRecv
-					gNetInfo[counter.Name].PacketsSent = speedPacketsSent
-					gNetInfo[counter.Name].PacketsRecv = speedPacketsRecv
+					// update net info
+					_updateNetInfo(counter.Name, speedSent, speedRecv, speedPacketsSent, speedPacketsRecv)
 				}
 
 				// update history value
@@ -281,12 +299,35 @@ func netMetric() {
 	}()
 }
 
+func _updateNetInfo(netIf string, speedSent, speedRecv, speedPacketsSent, speedPacketsRecv float64) {
+	netMu.Lock()
+	defer netMu.Unlock()
+	gNetInfo[netIf] = struct {
+		Sent        float64
+		Recv        float64
+		PacketsSent float64
+		PacketsRecv float64
+	}{
+		Sent:        speedSent,
+		Recv:        speedRecv,
+		PacketsSent: speedPacketsSent,
+		PacketsRecv: speedPacketsRecv,
+	}
+}
+
+func _getNetInfo(netIf string) (speedSent, speedRecv, speedPacketsSent, speedPacketsRecv float64) {
+	netMu.RLock()
+	defer netMu.RUnlock()
+	return gNetInfo[netIf].Sent, gNetInfo[netIf].Recv, gNetInfo[netIf].PacketsSent, gNetInfo[netIf].PacketsRecv
+}
+
 func showMetric() error {
 	var lines []string
 	lines = append(lines, "=== System Monitor ===")
 
 	if enableCpu {
 		lines = append(lines, fmt.Sprintf("CPU: %.2f%%", gCpuPercent))
+		// lines = append(lines, fmt.Sprintf("CPU: %.2f%% (Cores: physical[%d] / logic[%d])", gCpuPercent, gCpuPhysicalNum, gCpuLogicNum))
 	}
 	if enableMem {
 		lines = append(lines, fmt.Sprintf("Memory: %dGB/%dGB (%.2f%%)",
@@ -304,20 +345,21 @@ func showMetric() error {
 			}
 			lines = append(lines, fmt.Sprintf("Interface %s:", netIf))
 			// 计算网络IO速率（Kb/s）
-			netSendMsg := fmt.Sprintf("%.2f %s", gNetInfo[netIf].Sent/1024, "Kb/s")
-			netRecvMsg := fmt.Sprintf("%.2f %s", gNetInfo[netIf].Recv/1024, "Kb/s")
-			if gNetInfo[netIf].Sent/1024 > 1024 {
-				netSendMsg = fmt.Sprintf("%.2f %s", gNetInfo[netIf].Sent/1024/1024, "Mb/s")
+			speedSent, speedRecv, speedPacketsSent, speedPacketsRecv := _getNetInfo(netIf)
+			netSendMsg := fmt.Sprintf("%.2f %s", speedSent/1024, "Kb/s")
+			netRecvMsg := fmt.Sprintf("%.2f %s", speedRecv/1024, "Kb/s")
+			if speedSent/1024 > 1024 {
+				netSendMsg = fmt.Sprintf("%.2f %s", speedSent/1024/1024, "Mb/s")
 			}
-			if gNetInfo[netIf].Recv/1024 > 1024 {
-				netRecvMsg = fmt.Sprintf("%.2f %s", gNetInfo[netIf].Recv/1024/1024, "Mb/s")
+			if speedRecv/1024 > 1024 {
+				netRecvMsg = fmt.Sprintf("%.2f %s", speedRecv/1024/1024, "Mb/s")
 			}
 			lines = append(lines, fmt.Sprintf("  Network Sent: %s  Recv: %s.",
 				netSendMsg,
 				netRecvMsg))
 			// 计算网络包速率（pps）
 			lines = append(lines, fmt.Sprintf("  Packets Sent: %.2f pps  Recv: %.2f pps.",
-				gNetInfo[netIf].PacketsSent, gNetInfo[netIf].PacketsRecv))
+				speedPacketsSent, speedPacketsRecv))
 		}
 	}
 
