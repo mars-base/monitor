@@ -1,16 +1,19 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
 	"monitor/utils"
 	"os"
 	"sync"
+	"text/tabwriter"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 // global variable
@@ -21,6 +24,7 @@ var (
 	enableCpu bool
 	enableMem bool
 	enableNet bool
+	enableAll bool
 	interval  int
 
 	gCpuPercent     float64
@@ -67,10 +71,11 @@ var showCmd = &cobra.Command{
 	Short: "show command line parameters",
 	Run: func(cmd *cobra.Command, args []string) {
 		// enable flag
-		utils.Log().Debug("enable cpu:", enableCpu)
-		utils.Log().Debug("enable mem:", enableMem)
-		utils.Log().Debug("enable net:", enableNet)
-		utils.Log().Debugf("interval: %d seconds", interval)
+		fmt.Println("enable cpu:", enableCpu)
+		fmt.Println("enable mem:", enableMem)
+		fmt.Println("enable net:", enableNet)
+		fmt.Println("enable all:", enableAll)
+		fmt.Printf("interval: %d seconds\n", interval)
 	},
 }
 
@@ -78,10 +83,12 @@ var showCmd = &cobra.Command{
 // it should be called in main.go
 func CmdEntryPoint() {
 	// add flag
-	rootCmd.PersistentFlags().BoolVarP(&enableCpu, "cpu", "c", false, "enable cpu monitor")
-	rootCmd.PersistentFlags().BoolVarP(&enableMem, "mem", "m", false, "enable mem monitor")
-	rootCmd.PersistentFlags().BoolVarP(&enableNet, "net", "n", false, "enable net monitor")
-	rootCmd.PersistentFlags().IntVarP(&interval, "interval", "i", 2, "monitor interval in seconds")
+	rootCmd.PersistentFlags().BoolVarP(&enableCpu, "cpu", "c", false, "enable cpu metric")
+	rootCmd.PersistentFlags().BoolVarP(&enableMem, "mem", "m", false, "enable mem metric")
+	rootCmd.PersistentFlags().BoolVarP(&enableNet, "net", "n", false, "enable net metric")
+	// -a, --all 显示cpu/mem/网络接口的统计信息
+	rootCmd.PersistentFlags().BoolVarP(&enableAll, "all", "a", true, "enable all metrics")
+	rootCmd.PersistentFlags().IntVarP(&interval, "interval", "i", 2, "interval in seconds")
 
 	// add command
 	rootCmd.AddCommand(versionCmd)
@@ -104,8 +111,14 @@ var runCmd = &cobra.Command{
 		utils.Log().Debug("enable cpu:", enableCpu)
 		utils.Log().Debug("enable mem:", enableMem)
 		utils.Log().Debug("enable net:", enableNet)
+		utils.Log().Debug("enable all:", enableAll)
 		utils.Log().Debug("interval seconds:", interval)
 
+		if enableAll {
+			enableCpu = true
+			enableMem = true
+			enableNet = true
+		}
 		if enableCpu || enableMem || enableNet {
 			utils.Log().Debug("start monitor module")
 			if enableCpu {
@@ -322,61 +335,54 @@ func _getNetInfo(netIf string) (speedSent, speedRecv, speedPacketsSent, speedPac
 }
 
 func showMetric() error {
-	var lines []string
-	lines = append(lines, "=== System Monitor ===")
+	var buf bytes.Buffer
+	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+
+	fmt.Fprintln(w, centerText("=== System Monitor ==="))
 
 	if enableCpu {
-		lines = append(lines, fmt.Sprintf("CPU: %.2f%%", gCpuPercent))
-		// lines = append(lines, fmt.Sprintf("CPU: %.2f%% (Cores: physical[%d] / logic[%d])", gCpuPercent, gCpuPhysicalNum, gCpuLogicNum))
+		fmt.Fprintf(w, "CPU:\t%d/%d\t%.2f%%\n", gCpuPhysicalNum, gCpuLogicNum, gCpuPercent)
 	}
 	if enableMem {
-		lines = append(lines, fmt.Sprintf("Memory: %dGB/%dGB (%.2f%%)",
+		fmt.Fprintf(w, "Memory:\t%dGB/%dGB\t%.2f%%\n",
 			gMemUsed/1024/1024/1024,
 			gMemTotal/1024/1024/1024,
-			gMemPercent))
+			gMemPercent)
 	}
 	if enableNet {
-		// 网络IO速率（Kb/s）当速率超过1024Kb/s时，单位转换为Mb/s，发送和接受分开计算
-		// 遍历gNetInfo
 		for _, netIf := range gNetNames {
-			// 过滤出非回环接口
 			if netIf == "lo" {
 				continue
 			}
-			lines = append(lines, fmt.Sprintf("Interface %s:", netIf))
-			// 计算网络IO速率（Kb/s）
 			speedSent, speedRecv, speedPacketsSent, speedPacketsRecv := _getNetInfo(netIf)
-			netSendMsg := fmt.Sprintf("%.2f %s", speedSent/1024, "Kb/s")
-			netRecvMsg := fmt.Sprintf("%.2f %s", speedRecv/1024, "Kb/s")
+
+			netSendMsg := fmt.Sprintf("%.2f Kb/s", speedSent/1024)
+			netRecvMsg := fmt.Sprintf("%.2f Kb/s", speedRecv/1024)
 			if speedSent/1024 > 1024 {
-				netSendMsg = fmt.Sprintf("%.2f %s", speedSent/1024/1024, "Mb/s")
+				netSendMsg = fmt.Sprintf("%.2f Mb/s", speedSent/1024/1024)
 			}
 			if speedRecv/1024 > 1024 {
-				netRecvMsg = fmt.Sprintf("%.2f %s", speedRecv/1024/1024, "Mb/s")
+				netRecvMsg = fmt.Sprintf("%.2f Mb/s", speedRecv/1024/1024)
 			}
-			lines = append(lines, fmt.Sprintf("  Network Sent: %s  Recv: %s.",
-				netSendMsg,
-				netRecvMsg))
-			// 计算网络包速率（pps）
-			lines = append(lines, fmt.Sprintf("  Packets Sent: %.2f pps  Recv: %.2f pps.",
-				speedPacketsSent, speedPacketsRecv))
+
+			fmt.Fprintf(w, "Interface %s:\t%s\t%s\n", netIf, "", "")
+			fmt.Fprintf(w, "  Network Sent:\t%s\tRecv: %s.\n", netSendMsg, netRecvMsg)
+			fmt.Fprintf(w, "  Packets Sent:\t%.2f pps\tRecv: %.2f pps.\n", speedPacketsSent, speedPacketsRecv)
 		}
 	}
 
-	lines = append(lines, "Press Ctrl+C to exit")
+	fmt.Fprintln(w, "Press Ctrl+C to exit")
+	w.Flush()
 
-	if len(lines) == 2 { // 仅标题 + exit
+	if buf.Len() <= len("=== System Monitor ===\nPress Ctrl+C to exit\n") {
 		fmt.Println("no metric to monitor. -h for help")
 		return nil
 	}
 
-	// 清屏后再输出（可选）
+	// 清屏后再输出
 	fmt.Print("\033[H\033[2J")
+	fmt.Print(buf.String())
 
-	// 打印所有行
-	for _, l := range lines {
-		fmt.Println(l)
-	}
 	return nil
 }
 
@@ -394,4 +400,17 @@ func stopHandleMetric() error {
 		gTicker = nil
 	}
 	return nil
+}
+
+// 居中打印标题
+func centerText(text string) string {
+	width, _, err := term.GetSize(int(os.Stdout.Fd()))
+	if err != nil || width <= 0 {
+		width = 80 // 默认终端宽度
+	}
+	padding := (width - len(text)) / 2
+	if padding < 0 {
+		padding = 0
+	}
+	return fmt.Sprintf("%*s%s", padding, "", text)
 }
