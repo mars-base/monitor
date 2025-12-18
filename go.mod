@@ -15,6 +15,7 @@ require (
 	github.com/spf13/cobra v1.10.1
 	github.com/valyala/fasthttp v1.68.0
 	github.com/wangdiwen/gopool v0.0.0-20240603073552-fe45c51d1d0d
+	golang.org/x/term v0.36.0
 	gopkg.in/natefinch/lumberjack.v2 v2.2.1
 	gopkg.in/yaml.v3 v3.0.1
 )
