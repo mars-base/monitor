@@ -87,7 +87,7 @@ func CmdEntryPoint() {
 	rootCmd.PersistentFlags().BoolVarP(&enableMem, "mem", "m", false, "enable mem metric")
 	rootCmd.PersistentFlags().BoolVarP(&enableNet, "net", "n", false, "enable net metric")
 	// -a, --all 显示cpu/mem/网络接口的统计信息
-	rootCmd.PersistentFlags().BoolVarP(&enableAll, "all", "a", true, "enable all metrics")
+	rootCmd.PersistentFlags().BoolVarP(&enableAll, "all", "a", false, "enable all metrics")
 	rootCmd.PersistentFlags().IntVarP(&interval, "interval", "i", 2, "interval in seconds")
 
 	// add command
@@ -356,13 +356,26 @@ func showMetric() error {
 			}
 			speedSent, speedRecv, speedPacketsSent, speedPacketsRecv := _getNetInfo(netIf)
 
-			netSendMsg := fmt.Sprintf("%.2f Kb/s", speedSent/1024)
-			netRecvMsg := fmt.Sprintf("%.2f Kb/s", speedRecv/1024)
-			if speedSent/1024 > 1024 {
-				netSendMsg = fmt.Sprintf("%.2f Mb/s", speedSent/1024/1024)
+			const (
+				b  = 1
+				kb = 1024
+				mb = kb * 1024
+			)
+
+			netSendMsg := fmt.Sprintf("%.2f b/s", speedSent)
+			netRecvMsg := fmt.Sprintf("%.2f b/s", speedRecv)
+
+			if speedSent > kb {
+				netSendMsg = fmt.Sprintf("%.2f Kb/s", speedSent/kb)
 			}
-			if speedRecv/1024 > 1024 {
-				netRecvMsg = fmt.Sprintf("%.2f Mb/s", speedRecv/1024/1024)
+			if speedRecv > kb {
+				netRecvMsg = fmt.Sprintf("%.2f Kb/s", speedRecv/kb)
+			}
+			if speedSent > mb {
+				netSendMsg = fmt.Sprintf("%.2f Mb/s", speedSent/mb)
+			}
+			if speedRecv > mb {
+				netRecvMsg = fmt.Sprintf("%.2f Mb/s", speedRecv/mb)
 			}
 
 			fmt.Fprintf(w, "Interface %s:\t%s\t%s\n", netIf, "", "")
