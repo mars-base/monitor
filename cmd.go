@@ -1,12 +1,10 @@
 package main
 
 import (
-	"bytes"
 	"fmt"
 	"monitor/utils"
 	"os"
 	"sync"
-	"text/tabwriter"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
@@ -335,19 +333,21 @@ func _getNetInfo(netIf string) (speedSent, speedRecv, speedPacketsSent, speedPac
 }
 
 func showMetric() error {
-	var buf bytes.Buffer
-	w := tabwriter.NewWriter(&buf, 0, 0, 2, ' ', 0)
+	if !enableCpu && !enableMem && !enableNet {
+		fmt.Println("no metric to monitor. -h for help")
+		return nil
+	}
 
-	fmt.Fprintln(w, centerText("=== System Monitor ==="))
-
+	lines := []string{}
+	lines = append(lines, centerText("=== System Monitor ==="))
 	if enableCpu {
-		fmt.Fprintf(w, "CPU:\t%d/%d\t%.2f%%\n", gCpuPhysicalNum, gCpuLogicNum, gCpuPercent)
+		lines = append(lines, fmt.Sprintf("CPU:\t%d/%d\t%.2f%%", gCpuPhysicalNum, gCpuLogicNum, gCpuPercent))
 	}
 	if enableMem {
-		fmt.Fprintf(w, "Memory:\t%dGB/%dGB\t%.2f%%\n",
+		lines = append(lines, fmt.Sprintf("Memory:\t%dGB/%dGB\t%.2f%%",
 			gMemUsed/1024/1024/1024,
 			gMemTotal/1024/1024/1024,
-			gMemPercent)
+			gMemPercent))
 	}
 	if enableNet {
 		for _, netIf := range gNetNames {
@@ -378,23 +378,16 @@ func showMetric() error {
 				netRecvMsg = fmt.Sprintf("%.2f Mb/s", speedRecv/mb)
 			}
 
-			fmt.Fprintf(w, "Interface %s:\t%s\t%s\n", netIf, "", "")
-			fmt.Fprintf(w, "  Network Sent:\t%s\tRecv: %s.\n", netSendMsg, netRecvMsg)
-			fmt.Fprintf(w, "  Packets Sent:\t%.2f pps\tRecv: %.2f pps.\n", speedPacketsSent, speedPacketsRecv)
+			lines = append(lines, fmt.Sprintf("Interface %s:\t%s\t%s", netIf, "", ""))
+			lines = append(lines, fmt.Sprintf("  Network Sent:\t%s\tRecv: %s.", netSendMsg, netRecvMsg))
+			lines = append(lines, fmt.Sprintf("  Packets Sent:\t%.2f pps\tRecv: %.2f pps.", speedPacketsSent, speedPacketsRecv))
 		}
 	}
 
-	fmt.Fprintln(w, "Press Ctrl+C to exit")
-	w.Flush()
+	lines = append(lines, "Press Ctrl+C to exit")
 
-	if buf.Len() <= len("=== System Monitor ===\nPress Ctrl+C to exit\n") {
-		fmt.Println("no metric to monitor. -h for help")
-		return nil
-	}
-
-	// 清屏后再输出
-	fmt.Print("\033[H\033[2J")
-	fmt.Print(buf.String())
+	// draw terminal
+	utils.DrawTabTerm(lines)
 
 	return nil
 }
