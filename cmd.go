@@ -4,10 +4,13 @@ import (
 	"fmt"
 	"monitor/utils"
 	"os"
+	"runtime"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/shirou/gopsutil/v3/cpu"
+	"github.com/shirou/gopsutil/v3/disk"
 	"github.com/shirou/gopsutil/v3/mem"
 	"github.com/shirou/gopsutil/v3/net"
 	"github.com/spf13/cobra"
@@ -19,11 +22,12 @@ var (
 	stop    bool = false
 	gTicker *utils.RepeatingTimer
 
-	enableCpu bool
-	enableMem bool
-	enableNet bool
-	enableAll bool
-	interval  int
+	enableCpu  bool
+	enableMem  bool
+	enableNet  bool
+	enableDisk bool
+	enableAll  bool
+	interval   int
 
 	gCpuPercent     float64
 	gCpuLogicNum    int
@@ -43,6 +47,15 @@ var (
 		PacketsRecv float64 // 接收包速率（pps）
 	})
 	gNetNames = []string{}
+)
+
+var (
+	diskMu    sync.RWMutex
+	gDiskInfo = make(map[string]struct {
+		Read  uint64 // 读取字节数（B/s）
+		Write uint64 // 写入字节数（B/s）
+	})
+	gDiskNames = []string{}
 )
 
 // cobra root command
@@ -72,6 +85,7 @@ var showCmd = &cobra.Command{
 		fmt.Println("enable cpu:", enableCpu)
 		fmt.Println("enable mem:", enableMem)
 		fmt.Println("enable net:", enableNet)
+		fmt.Println("enable net:", enableDisk)
 		fmt.Println("enable all:", enableAll)
 		fmt.Printf("interval: %d seconds\n", interval)
 	},
@@ -84,6 +98,7 @@ func CmdEntryPoint() {
 	rootCmd.PersistentFlags().BoolVarP(&enableCpu, "cpu", "c", false, "enable cpu metric")
 	rootCmd.PersistentFlags().BoolVarP(&enableMem, "mem", "m", false, "enable mem metric")
 	rootCmd.PersistentFlags().BoolVarP(&enableNet, "net", "n", false, "enable net metric")
+	rootCmd.PersistentFlags().BoolVarP(&enableDisk, "disk", "d", false, "enable disk metric")
 	// -a, --all 显示cpu/mem/网络接口的统计信息
 	rootCmd.PersistentFlags().BoolVarP(&enableAll, "all", "a", false, "enable all metrics")
 	rootCmd.PersistentFlags().IntVarP(&interval, "interval", "i", 2, "interval in seconds")
@@ -109,6 +124,7 @@ var runCmd = &cobra.Command{
 		utils.Log().Debug("enable cpu:", enableCpu)
 		utils.Log().Debug("enable mem:", enableMem)
 		utils.Log().Debug("enable net:", enableNet)
+		utils.Log().Debug("enable disk:", enableDisk)
 		utils.Log().Debug("enable all:", enableAll)
 		utils.Log().Debug("interval seconds:", interval)
 
@@ -116,8 +132,9 @@ var runCmd = &cobra.Command{
 			enableCpu = true
 			enableMem = true
 			enableNet = true
+			enableDisk = true
 		}
-		if enableCpu || enableMem || enableNet {
+		if enableCpu || enableMem || enableNet || enableDisk {
 			utils.Log().Debug("start monitor module")
 			if enableCpu {
 				utils.Log().Debug("start cpu monitor module")
@@ -130,6 +147,10 @@ var runCmd = &cobra.Command{
 			if enableNet {
 				utils.Log().Debug("start net monitor module")
 				netMetric()
+			}
+			if enableDisk {
+				utils.Log().Debug("start disk monitor module")
+				diskMetric()
 			}
 		} else {
 			logger.Println("no monitor module enabled, -h for help")
@@ -310,6 +331,131 @@ func netMetric() {
 	}()
 }
 
+func isPhysicalDiskOnLinux(name string) bool {
+	// 先排除明显虚拟设备
+	if isVirtualDevice(name) {
+		return false
+	}
+
+	// 再通过 /sys/block/xxx/device 确认是物理设备
+	_, err := os.Stat("/sys/block/" + name + "/device")
+	return err == nil
+}
+
+func isVirtualDevice(name string) bool {
+	if name == "" {
+		return true
+	}
+	prefixes := []string{"dm-", "loop", "ram", "sr", "fd", "md", "zram"}
+	for _, p := range prefixes {
+		if strings.HasPrefix(name, p) {
+			return true
+		}
+	}
+	return false
+}
+
+// isPhysicalDisk 跨平台判断（目前仅 Linux 有精准方法）
+func isPhysicalDisk(name string) bool {
+	if runtime.GOOS == "linux" {
+		return isPhysicalDiskOnLinux(name)
+	}
+	// Windows/macOS: 暂按名称粗略过滤（可根据需求增强）
+	return true // 或根据名称规则过滤
+}
+
+func diskMetric() {
+	go func() {
+		utils.Log().Debug("disk metric started")
+
+		diskHistory := make(map[string]struct {
+			prevRead, prevWrite uint64
+			firstRun            bool
+		})
+
+		// 获取磁盘设备
+		diskIfs, err := disk.IOCounters()
+		if err != nil {
+			utils.Log().Errorf("failed to get disk io counters: %v", err)
+			return
+		}
+		// 初始化磁盘历史记录
+		for name, counter := range diskIfs {
+			if isPhysicalDisk(name) {
+				// 记录物理磁盘名称
+				gDiskNames = append(gDiskNames, name)
+				diskHistory[name] = struct {
+					prevRead, prevWrite uint64
+					firstRun            bool
+				}{
+					prevRead:  counter.ReadBytes,
+					prevWrite: counter.WriteBytes,
+					firstRun:  true,
+				}
+			}
+		}
+
+		time.Sleep(time.Second)
+
+		for {
+			if stop {
+				utils.Log().Debug("disk metric stopped")
+				return
+			}
+			utils.Log().Debug("collect disk info")
+			diskIO, err := disk.IOCounters()
+			if err != nil {
+				utils.Log().Errorf("failed to get disk io counters: %v", err)
+				return
+			}
+			// 遍历每个磁盘接口
+			for name, counter := range diskIO {
+				// 记录物理磁盘统计信息
+				if !isPhysicalDisk(name) {
+					continue
+				}
+				utils.Log().Debugf("Disk interface: %s", name)
+				utils.Log().Debugf("  Read Bytes: %d", counter.ReadBytes)
+				utils.Log().Debugf("  Write Bytes: %d", counter.WriteBytes)
+
+				// update disk info
+				if !diskHistory[name].firstRun {
+					_updateDiskInfo(name, counter.ReadBytes-diskHistory[name].prevRead, counter.WriteBytes-diskHistory[name].prevWrite)
+				}
+
+				// update history value
+				diskHistory[name] = struct {
+					prevRead, prevWrite uint64
+					firstRun            bool
+				}{
+					prevRead:  counter.ReadBytes,
+					prevWrite: counter.WriteBytes,
+					firstRun:  false,
+				}
+			}
+			time.Sleep(time.Second)
+		}
+	}()
+}
+
+func _updateDiskInfo(diskIf string, read, write uint64) {
+	diskMu.Lock()
+	defer diskMu.Unlock()
+	gDiskInfo[diskIf] = struct {
+		Read  uint64 // 读取字节数（B/s）
+		Write uint64 // 写入字节数（B/s）
+	}{
+		Read:  read,
+		Write: write,
+	}
+}
+
+func _getDiskInfo(diskIf string) (read, write uint64) {
+	diskMu.RLock()
+	defer diskMu.RUnlock()
+	return gDiskInfo[diskIf].Read, gDiskInfo[diskIf].Write
+}
+
 func _updateNetInfo(netIf string, speedSent, speedRecv, speedPacketsSent, speedPacketsRecv float64) {
 	netMu.Lock()
 	defer netMu.Unlock()
@@ -333,7 +479,7 @@ func _getNetInfo(netIf string) (speedSent, speedRecv, speedPacketsSent, speedPac
 }
 
 func showMetric() error {
-	if !enableCpu && !enableMem && !enableNet {
+	if !enableCpu && !enableMem && !enableNet && !enableDisk {
 		fmt.Println("no metric to monitor. -h for help")
 		return nil
 	}
@@ -379,8 +525,38 @@ func showMetric() error {
 			}
 
 			lines = append(lines, fmt.Sprintf("Interface %s:\t%s\t%s", netIf, "", ""))
-			lines = append(lines, fmt.Sprintf("  Network Sent:\t%s\tRecv: %s.", netSendMsg, netRecvMsg))
-			lines = append(lines, fmt.Sprintf("  Packets Sent:\t%.2f pps\tRecv: %.2f pps.", speedPacketsSent, speedPacketsRecv))
+			lines = append(lines, fmt.Sprintf("  Network\tSent: %s\tRecv: %s.", netSendMsg, netRecvMsg))
+			lines = append(lines, fmt.Sprintf("  Packets\tSent: %.2f pps\tRecv: %.2f pps.", speedPacketsSent, speedPacketsRecv))
+		}
+	}
+
+	if enableDisk {
+		for _, diskIf := range gDiskNames {
+			read, write := _getDiskInfo(diskIf)
+			const (
+				b  = 1
+				kb = 1024
+				mb = kb * 1024
+			)
+
+			diskReadMsg := fmt.Sprintf("%.2f B/s", float64(read))
+			diskWriteMsg := fmt.Sprintf("%.2f B/s", float64(write))
+
+			if read > kb {
+				diskReadMsg = fmt.Sprintf("%.2f KB/s", float64(read)/kb)
+			}
+			if write > kb {
+				diskWriteMsg = fmt.Sprintf("%.2f KB/s", float64(write)/kb)
+			}
+			if read > mb {
+				diskReadMsg = fmt.Sprintf("%.2f MB/s", float64(read)/mb)
+			}
+			if write > mb {
+				diskWriteMsg = fmt.Sprintf("%.2f MB/s", float64(write)/mb)
+			}
+
+			lines = append(lines, fmt.Sprintf("Disk %s:\t%s\t%s", diskIf, "", ""))
+			lines = append(lines, fmt.Sprintf("  \tRead: %s\tWrite: %s.", diskReadMsg, diskWriteMsg))
 		}
 	}
 
