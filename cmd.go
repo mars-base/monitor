@@ -22,12 +22,13 @@ var (
 	stop    bool = false
 	gTicker *utils.RepeatingTimer
 
-	enableCpu  bool
-	enableMem  bool
-	enableNet  bool
-	enableDisk bool
-	enableAll  bool
-	interval   int
+	enableCpu     bool
+	enableMem     bool
+	enableNet     bool
+	enableDisk    bool
+	enableAll     bool
+	interval      int
+	interfaceName string // 网络接口名称，默认所有接口
 
 	gCpuPercent     float64
 	gCpuLogicNum    int
@@ -88,6 +89,7 @@ var showCmd = &cobra.Command{
 		fmt.Println("enable net:", enableDisk)
 		fmt.Println("enable all:", enableAll)
 		fmt.Printf("interval: %d seconds\n", interval)
+		fmt.Println("interface name:", interfaceName)
 	},
 }
 
@@ -102,6 +104,8 @@ func CmdEntryPoint() {
 	// -a, --all 显示cpu/mem/网络接口的统计信息
 	rootCmd.PersistentFlags().BoolVarP(&enableAll, "all", "a", false, "enable all metrics")
 	rootCmd.PersistentFlags().IntVarP(&interval, "interval", "i", 2, "interval in seconds")
+	// --if 指定监控的网络接口名称，默认所有接口
+	rootCmd.PersistentFlags().StringVarP(&interfaceName, "if", "", "", "network interface name")
 
 	// add command
 	rootCmd.AddCommand(versionCmd)
@@ -127,6 +131,7 @@ var runCmd = &cobra.Command{
 		utils.Log().Debug("enable disk:", enableDisk)
 		utils.Log().Debug("enable all:", enableAll)
 		utils.Log().Debug("interval seconds:", interval)
+		utils.Log().Debug("interface name:", interfaceName)
 
 		if enableAll {
 			enableCpu = true
@@ -497,9 +502,15 @@ func showMetric() error {
 	}
 	if enableNet {
 		for _, netIf := range gNetNames {
+			// exclude loopback interface
 			if netIf == "lo" {
 				continue
 			}
+			// just filter spec net if
+			if interfaceName != "" && netIf != interfaceName {
+				continue
+			}
+
 			speedSent, speedRecv, speedPacketsSent, speedPacketsRecv := _getNetInfo(netIf)
 
 			const (
