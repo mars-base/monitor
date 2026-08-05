@@ -1,28 +1,75 @@
-# 定义编译输出目录
+# Build output directory
 BUILD_DIR := build
 
-# 定义目标文件名称
+# Application name
 APP_NAME := monitor
 
-# 定义目标平台
-PLATFORMS := windows linux darwin-amd64 darwin-arm64
+# Target platforms
+PLATFORMS := windows linux linux-arm64 darwin-amd64 darwin-arm64
 
-# 定义每个平台的输出文件名称
-WINDOWS_OUTPUT := $(BUILD_DIR)/$(APP_NAME).exe
-LINUX_OUTPUT := $(BUILD_DIR)/$(APP_NAME)-linux
+# Output file names per platform
+WINDOWS_OUTPUT     := $(BUILD_DIR)/$(APP_NAME).exe
+LINUX_OUTPUT       := $(BUILD_DIR)/$(APP_NAME)-linux
+LINUX_ARM64_OUTPUT := $(BUILD_DIR)/$(APP_NAME)-linux-arm64
 MACOS_AMD64_OUTPUT := $(BUILD_DIR)/$(APP_NAME)-darwin-amd64
 MACOS_ARM64_OUTPUT := $(BUILD_DIR)/$(APP_NAME)-darwin-arm64
 
-# 默认目标
-.PHONY: all
+# Installation directories
+PREFIX  ?= /usr/local
+BINDIR  ?= $(PREFIX)/bin
+DESTDIR ?=
+
+# Detect current OS and architecture
+CURRENT_OS   := $(shell go env GOOS)
+CURRENT_ARCH := $(shell go env GOARCH)
+
+# Resolve the binary for the current platform
+ifeq ($(CURRENT_OS),windows)
+  CURRENT_OUTPUT := $(WINDOWS_OUTPUT)
+  INSTALL_NAME   := $(APP_NAME).exe
+else ifeq ($(CURRENT_OS)_$(CURRENT_ARCH),linux_arm64)
+  CURRENT_OUTPUT := $(LINUX_ARM64_OUTPUT)
+  INSTALL_NAME   := $(APP_NAME)
+else ifeq ($(CURRENT_OS),linux)
+  CURRENT_OUTPUT := $(LINUX_OUTPUT)
+  INSTALL_NAME   := $(APP_NAME)
+else ifeq ($(CURRENT_OS)_$(CURRENT_ARCH),darwin_arm64)
+  CURRENT_OUTPUT := $(MACOS_ARM64_OUTPUT)
+  INSTALL_NAME   := $(APP_NAME)
+else ifeq ($(CURRENT_OS),darwin)
+  CURRENT_OUTPUT := $(MACOS_AMD64_OUTPUT)
+  INSTALL_NAME   := $(APP_NAME)
+endif
+
+# ---- Build targets ----
+
+.PHONY: all $(PLATFORMS) dev clean install uninstall
+
 all: $(PLATFORMS)
 
-# 创建build目录
 $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
-# 开发模式
-.PHONY: dev
+windows: $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags '-s -w' -o $(WINDOWS_OUTPUT) .
+
+linux: $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags '-s -w' -o $(LINUX_OUTPUT) .
+
+linux-arm64: $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags '-s -w' -o $(LINUX_ARM64_OUTPUT) .
+
+darwin-amd64: $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags '-s -w' -o $(MACOS_AMD64_OUTPUT) .
+
+darwin-arm64: $(BUILD_DIR)
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags '-s -w' -o $(MACOS_ARM64_OUTPUT) .
+
+clean:
+	rm -rf $(BUILD_DIR)
+
+# ---- Dev mode ----
+
 dev:
 	CompileDaemon \
 	-graceful-kill=true \
@@ -31,47 +78,23 @@ dev:
 	-color=true \
 	-build="make linux" -command="./$(LINUX_OUTPUT) run -c -m -n -i 2"
 
-windows: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -a -ldflags '-extldflags "-static" -s -w' -o $(WINDOWS_OUTPUT)
+# ---- Install / Uninstall ----
 
-linux: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -a -ldflags '-extldflags "-static" -s -w' -o $(LINUX_OUTPUT)
-	@which upx >/dev/null 2>&1 && upx $(LINUX_OUTPUT) || echo "upx not found, skipping compression"
-
-# macOS目标 (amd64)
-darwin-amd64: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -a -ldflags '-extldflags "-static" -s -w' -o $(MACOS_AMD64_OUTPUT)
-
-# macOS目标 (arm64)
-darwin-arm64: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -a -ldflags '-extldflags "-static" -s -w' -o $(MACOS_ARM64_OUTPUT)
-
-# 清理构建文件
-clean:
-	rm -rf $(BUILD_DIR)
-
-# Installation directories (can be overridden)
-PREFIX ?= /usr/local
-BINDIR ?= $(PREFIX)/bin
-DESTDIR ?=
-
-install: $(BUILD_DIR)
-	@echo "Installing $(APP_NAME) to $(DESTDIR)$(BINDIR)"
-	install -d $(DESTDIR)$(BINDIR)
-ifeq ($(OS),Windows_NT)
-	install -m 755 $(WINDOWS_OUTPUT) $(DESTDIR)$(BINDIR)/$(APP_NAME).exe
+# Build for current platform before install
+install: $(CURRENT_OUTPUT)
+	@echo "Installing $(INSTALL_NAME) to $(DESTDIR)$(BINDIR)"
+ifeq ($(CURRENT_OS),windows)
+	@if not exist "$(DESTDIR)$(BINDIR)" mkdir "$(DESTDIR)$(BINDIR)"
+	copy /Y "$(subst /,\,$(CURRENT_OUTPUT))" "$(subst /,\,$(DESTDIR)$(BINDIR)\$(INSTALL_NAME))"
 else
-	ifeq ($(shell uname -s),Darwin)
-		ifeq ($(shell uname -m),arm64)
-			install -m 755 $(MACOS_ARM64_OUTPUT) $(DESTDIR)$(BINDIR)/$(APP_NAME)
-		else
-			install -m 755 $(MACOS_AMD64_OUTPUT) $(DESTDIR)$(BINDIR)/$(APP_NAME)
-		endif
-	else
-		install -m 755 $(LINUX_OUTPUT) $(DESTDIR)$(BINDIR)/$(APP_NAME)
-	endif
+	install -d $(DESTDIR)$(BINDIR)
+	install -m 755 $(CURRENT_OUTPUT) $(DESTDIR)$(BINDIR)/$(INSTALL_NAME)
 endif
 
 uninstall:
-	@echo "Uninstalling $(APP_NAME) from $(DESTDIR)$(BINDIR)"
-	rm -f $(DESTDIR)$(BINDIR)/$(APP_NAME) $(DESTDIR)$(BINDIR)/$(APP_NAME).exe
+	@echo "Uninstalling from $(DESTDIR)$(BINDIR)"
+ifeq ($(CURRENT_OS),windows)
+	del /Q "$(subst /,\,$(DESTDIR)$(BINDIR)\$(INSTALL_NAME))" 2>nul
+else
+	rm -f $(DESTDIR)$(BINDIR)/$(INSTALL_NAME)
+endif
