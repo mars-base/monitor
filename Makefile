@@ -50,7 +50,28 @@ darwin-arm64: $(BUILD_DIR)
 clean:
 	rm -rf $(BUILD_DIR)
 
-install:
-	mkdir -p ~/bucket/tools/monitor
-	cp $(BUILD_DIR)/* ~/bucket/tools/monitor
-	sudo cp $(LINUX_OUTPUT) /usr/local/bin/monitor
+# Installation directories (can be overridden)
+PREFIX ?= /usr/local
+BINDIR ?= $(PREFIX)/bin
+DESTDIR ?=
+
+install: $(BUILD_DIR)
+	@echo "Installing $(APP_NAME) to $(DESTDIR)$(BINDIR)"
+	install -d $(DESTDIR)$(BINDIR)
+ifeq ($(OS),Windows_NT)
+	install -m 755 $(WINDOWS_OUTPUT) $(DESTDIR)$(BINDIR)/$(APP_NAME).exe
+else
+	ifeq ($(shell uname -s),Darwin)
+		ifeq ($(shell uname -m),arm64)
+			install -m 755 $(MACOS_ARM64_OUTPUT) $(DESTDIR)$(BINDIR)/$(APP_NAME)
+		else
+			install -m 755 $(MACOS_AMD64_OUTPUT) $(DESTDIR)$(BINDIR)/$(APP_NAME)
+		endif
+	else
+		install -m 755 $(LINUX_OUTPUT) $(DESTDIR)$(BINDIR)/$(APP_NAME)
+	endif
+endif
+
+uninstall:
+	@echo "Uninstalling $(APP_NAME) from $(DESTDIR)$(BINDIR)"
+	rm -f $(DESTDIR)$(BINDIR)/$(APP_NAME) $(DESTDIR)$(BINDIR)/$(APP_NAME).exe
