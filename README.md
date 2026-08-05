@@ -57,8 +57,13 @@ Binaries are output to the `build/` directory.
 ## Install
 
 ```bash
-make install      # copy binaries to ~/bucket/tools/monitor and /usr/local/bin/monitor
+make install                  # install to /usr/local/bin
+make install PREFIX=/opt      # install to /opt/bin
+make install DESTDIR=/tmp/pkg # install to staging directory (useful for packaging)
+make uninstall                # remove installed binary
 ```
+
+Or download pre-built binaries from [Releases](https://github.com/mars-base/monitor/releases).
 
 ## Dependencies
 
