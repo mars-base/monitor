@@ -19,24 +19,24 @@ PREFIX  ?= /usr/local
 BINDIR  ?= $(PREFIX)/bin
 DESTDIR ?=
 
-# Detect current OS and architecture
-CURRENT_OS   := $(shell go env GOOS)
-CURRENT_ARCH := $(shell go env GOARCH)
+# Detect current OS and architecture via uname (works under sudo without go)
+CURRENT_OS   := $(shell uname -s 2>/dev/null || echo Windows)
+CURRENT_ARCH := $(shell uname -m 2>/dev/null || echo x86_64)
 
 # Resolve the binary for the current platform
-ifeq ($(CURRENT_OS),windows)
+ifeq ($(CURRENT_OS),Windows_NT)
   CURRENT_OUTPUT := $(WINDOWS_OUTPUT)
   INSTALL_NAME   := $(APP_NAME).exe
-else ifeq ($(CURRENT_OS)_$(CURRENT_ARCH),linux_arm64)
+else ifeq ($(CURRENT_OS)_$(CURRENT_ARCH),Linux_aarch64)
   CURRENT_OUTPUT := $(LINUX_ARM64_OUTPUT)
   INSTALL_NAME   := $(APP_NAME)
-else ifeq ($(CURRENT_OS),linux)
+else ifeq ($(CURRENT_OS),Linux)
   CURRENT_OUTPUT := $(LINUX_OUTPUT)
   INSTALL_NAME   := $(APP_NAME)
-else ifeq ($(CURRENT_OS)_$(CURRENT_ARCH),darwin_arm64)
+else ifeq ($(CURRENT_OS)_$(CURRENT_ARCH),Darwin_arm64)
   CURRENT_OUTPUT := $(MACOS_ARM64_OUTPUT)
   INSTALL_NAME   := $(APP_NAME)
-else ifeq ($(CURRENT_OS),darwin)
+else ifeq ($(CURRENT_OS),Darwin)
   CURRENT_OUTPUT := $(MACOS_AMD64_OUTPUT)
   INSTALL_NAME   := $(APP_NAME)
 endif
@@ -80,8 +80,8 @@ dev:
 
 # ---- Install / Uninstall ----
 
-# Build for current platform before install
-install: $(CURRENT_OUTPUT)
+install:
+	@if [ ! -f "$(CURRENT_OUTPUT)" ]; then echo "Error: $(CURRENT_OUTPUT) not found. Run 'make' first."; exit 1; fi
 	@echo "Installing $(INSTALL_NAME) to $(DESTDIR)$(BINDIR)"
 ifeq ($(CURRENT_OS),windows)
 	@if not exist "$(DESTDIR)$(BINDIR)" mkdir "$(DESTDIR)$(BINDIR)"
