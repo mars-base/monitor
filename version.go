@@ -1,7 +1,9 @@
 package main
 
-// Application info
-const (
+// Injected at build time via -ldflags
+var (
 	AppName    = "Monitor"
-	AppVersion = "v2.0"
+	AppVersion = "dev"
+	BuildTime  = ""
+	GitCommit  = ""
 )

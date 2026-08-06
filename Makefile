@@ -4,6 +4,15 @@ BUILD_DIR := build
 # Application name
 APP_NAME := monitor
 
+# Build metadata (injected via ldflags)
+VERSION   := $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
+GIT_COMMIT := $(shell git rev-parse --short HEAD 2>/dev/null || echo "unknown")
+BUILD_TIME := $(shell date -u '+%Y-%m-%dT%H:%M:%SZ')
+LDFLAGS   := -s -w \
+	-X 'main.AppVersion=$(VERSION)' \
+	-X 'main.GitCommit=$(GIT_COMMIT)' \
+	-X 'main.BuildTime=$(BUILD_TIME)'
+
 # Target platforms
 PLATFORMS := windows linux linux-arm64 darwin-amd64 darwin-arm64
 
@@ -51,19 +60,19 @@ $(BUILD_DIR):
 	mkdir -p $(BUILD_DIR)
 
 windows: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags '-s -w' -o $(WINDOWS_OUTPUT) .
+	CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags '$(LDFLAGS)' -o $(WINDOWS_OUTPUT) .
 
 linux: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags '-s -w' -o $(LINUX_OUTPUT) .
+	CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags '$(LDFLAGS)' -o $(LINUX_OUTPUT) .
 
 linux-arm64: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags '-s -w' -o $(LINUX_ARM64_OUTPUT) .
+	CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -ldflags '$(LDFLAGS)' -o $(LINUX_ARM64_OUTPUT) .
 
 darwin-amd64: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags '-s -w' -o $(MACOS_AMD64_OUTPUT) .
+	CGO_ENABLED=0 GOOS=darwin GOARCH=amd64 go build -ldflags '$(LDFLAGS)' -o $(MACOS_AMD64_OUTPUT) .
 
 darwin-arm64: $(BUILD_DIR)
-	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags '-s -w' -o $(MACOS_ARM64_OUTPUT) .
+	CGO_ENABLED=0 GOOS=darwin GOARCH=arm64 go build -ldflags '$(LDFLAGS)' -o $(MACOS_ARM64_OUTPUT) .
 
 clean:
 	rm -rf $(BUILD_DIR)

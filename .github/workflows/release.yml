@@ -42,7 +42,12 @@ jobs:
           CGO_ENABLED: "0"
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
-        run: go build -ldflags '-s -w' -o ${{ matrix.output }} .
+        run: |
+          VERSION=${GITHUB_REF_NAME:-dev}
+          GIT_COMMIT=${GITHUB_SHA:0:7}
+          BUILD_TIME=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+          LDFLAGS="-s -w -X 'main.AppVersion=$VERSION' -X 'main.GitCommit=$GIT_COMMIT' -X 'main.BuildTime=$BUILD_TIME'"
+          go build -ldflags "$LDFLAGS" -o ${{ matrix.output }} .
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4

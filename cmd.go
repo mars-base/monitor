@@ -69,7 +69,13 @@ var versionCmd = &cobra.Command{
 	Use:   "version",
 	Short: "Print the version number of monitor",
 	Run: func(cmd *cobra.Command, args []string) {
-		utils.Log().Debug(AppName, AppVersion)
+		fmt.Printf("%s %s\n", AppName, AppVersion)
+		if GitCommit != "" {
+			fmt.Printf("Commit: %s\n", GitCommit)
+		}
+		if BuildTime != "" {
+			fmt.Printf("Built:  %s\n", BuildTime)
+		}
 	},
 }
 
