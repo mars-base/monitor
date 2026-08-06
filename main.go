@@ -1,8 +1,5 @@
 package main
 
-// Time    :   2025-11-25 05:19:26 PM
-// Author  :   diwen
-
 import (
 	"monitor/utils" // private package
 )

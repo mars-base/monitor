@@ -65,12 +65,6 @@ make uninstall                # remove installed binary
 
 Or download pre-built binaries from [Releases](https://github.com/mars-base/monitor/releases).
 
-## Dependencies
-
-- [cobra](https://github.com/spf13/cobra) - CLI framework
-- [gopsutil](https://github.com/shirou/gopsutil) - system/process metrics
-- [term](https://pkg.go.dev/golang.org/x/term) - terminal size detection
-
 ## License
 
 See [LICENSE](LICENSE).
