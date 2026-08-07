@@ -62,7 +62,9 @@ type DiskInfo struct {
 var rootCmd = &cobra.Command{
 	Use:   "monitor",
 	Short: "Simple tool to monitor cpu/mem/network.",
-	Run:   func(cmd *cobra.Command, args []string) {},
+	Run: func(cmd *cobra.Command, args []string) {
+		runCmd.Run(cmd, args)
+	},
 }
 
 var versionCmd = &cobra.Command{
@@ -99,7 +101,7 @@ func CmdEntryPoint() {
 	rootCmd.PersistentFlags().BoolVarP(&enableMem, "mem", "m", false, "enable mem metric")
 	rootCmd.PersistentFlags().BoolVarP(&enableNet, "net", "n", false, "enable net metric")
 	rootCmd.PersistentFlags().BoolVarP(&enableDisk, "disk", "d", false, "enable disk metric")
-	rootCmd.PersistentFlags().BoolVarP(&enableAll, "all", "a", false, "enable all metrics")
+	rootCmd.PersistentFlags().BoolVarP(&enableAll, "all", "a", true, "enable all metrics")
 	rootCmd.PersistentFlags().IntVarP(&interval, "interval", "i", 2, "interval in seconds")
 	rootCmd.PersistentFlags().StringVarP(&interfaceName, "if", "", "", "network interface name")
 
